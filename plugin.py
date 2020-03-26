@@ -1,6 +1,8 @@
 from model.dfanet import DFANet
 import numpy as np
 from collections import OrderedDict
+import torchvision.transforms as transforms
+from sklearn import preprocessing
 import cv2
 import torch
 
@@ -42,7 +44,7 @@ class DFANetPlugin(object):
 
         self.model = DFANet(pretrained=False, pretrained_backbone=False)
 
-        state_dict = torch.load(model_url)
+        state_dict = torch.load(model_url)["state_dict"]
         new_state_dict = OrderedDict()
         for k, v in state_dict.items():
             name = k[7:]  # remove 'module.' from nn.DataParallel
@@ -54,8 +56,16 @@ class DFANetPlugin(object):
             self.model.cuda()
 
     def process(self, image):
-        x = cv2.resize(image, dsize=(1024, 1024, 3)).transpose((2, 0, 1))
-        x = torch.from_numpy(x).view(1, 3, 1024, 1024)
+        x_n = cv2.resize(image, dsize=(1024, 1024)).transpose((2, 0, 1))
+        #mean0 = np.sum(x_n[0, :, :]) / (1024**2)
+        #mean1 = np.sum(x_n[1, :, :]) / (1024 ** 2)
+        #mean2 = np.sum(x_n[2, :, :]) / (1024 ** 2)
+        x_n = x_n.astype(np.float64)
+        x_n[0, :, :] = preprocessing.scale(x_n[0, :, :])
+        x_n[1, :, :] = preprocessing.scale(x_n[1, :, :])
+        x_n[2, :, :] = preprocessing.scale(x_n[2, :, :])
+        #normal = transforms.Normalize(mean=[mean0, mean1, mean2], std=[1, 1, 1])
+        x = torch.from_numpy(x_n).type('torch.FloatTensor').view(1, 3, 1024, 1024)
         if self.use_cuda:
             x = x.cuda()
         _, mask = self.model(x).max(1)
@@ -63,8 +73,10 @@ class DFANetPlugin(object):
             mask = mask.cpu()
         mask = mask.numpy()
         colormap = mask_to_colormap(mask)
-        colormap = np.array(colormap).transpose((1, 2, 0))
-        colormap = cv2.resize(colormap, dsize=image.shape, interpolation=cv2.INTER_NEAREST)
+        colormap = np.array(colormap)
+        colormap = colormap.reshape(3, 1024, 1024)
+        colormap = colormap.transpose(1, 2, 0)
+        colormap = cv2.resize(colormap, dsize=(2048, 1024), interpolation=cv2.INTER_NEAREST)
         output = self.opacity * colormap + (1 - self.opacity) * image
         return output
 
